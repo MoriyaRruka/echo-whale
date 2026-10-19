@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小鲸控制台</title>
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --line:#263041; --text:#e6edf3; --dim:#8b949e; --ok:#3fb950; --bad:#f85149; --accent:#58a6ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.6 "Microsoft YaHei",system-ui,sans-serif; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 28px 20px 60px; }
+  h1 { font-size:20px; font-weight:600; margin:0 0 4px; }
+  .sub { color:var(--dim); font-size:12px; margin-bottom:20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:14px; }
+  .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--bad); display:inline-block; }
+  .dot.on { background:var(--ok); box-shadow:0 0 8px rgba(63,185,80,.6); }
+  .state { font-weight:600; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-top:4px; }
+  .kv { font-size:12px; color:var(--dim); }
+  .kv b { display:block; color:var(--text); font-size:14px; font-weight:500; margin-top:2px; word-break:break-all; }
+  button { background:#21262d; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:9px 16px; font-size:14px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:#1f6feb; border-color:#1f6feb; }
+  button.danger { color:#ff7b72; }
+  select { background:#0d1117; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:9px 10px; font-size:14px; }
+  pre { background:#0a0d12; border:1px solid var(--line); border-radius:8px; padding:12px; font-size:12px; line-height:1.5; height:260px; overflow:auto; margin:0; white-space:pre-wrap; word-break:break-all; color:#c9d1d9; }
+  .msg { font-size:12px; color:var(--dim); min-height:18px; }
+  .bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .bar span { font-size:13px; color:var(--dim); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>小鲸控制台</h1>
+  <div class="sub">只对这台电脑开放 · 127.0.0.1</div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <div class="row"><span class="dot" id="dot"></span><span class="state" id="state">读取中…</span></div>
+      <div class="row">
+        <button class="primary" onclick="act('start')">启动</button>
+        <button onclick="act('restart')">重启</button>
+        <button class="danger" onclick="act('stop')">停止</button>
+      </div>
+    </div>
+    <div class="msg" id="msg"></div>
+    <div class="grid">
+      <div class="kv">它的名字<b id="name">-</b></div>
+      <div class="kv">机器人 QQ<b id="qq">-</b></div>
+      <div class="kv">能指挥它的人<b id="owners">-</b></div>
+      <div class="kv">群聊<b id="group">-</b></div>
+      <div class="kv">模型<b id="model">-</b></div>
+      <div class="kv">跑了多久<b id="uptime">-</b></div>
+      <div class="kv">进程<b id="pids">-</b></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="bar"><span>换模型（换完自动重启）</span></div>
+    <div class="row">
+      <select id="models"></select>
+      <button onclick="switchModel()">应用</button>
+      <span class="msg" id="mmsg"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="bar"><span>日志（最近 80 行，3 秒刷新）</span><button onclick="load()">刷新</button></div>
+    <pre id="log">-</pre>
+  </div>
+</div>
+
+<script>
+let timer = null;
+const fmt = (ms) => {
+  if (!ms || ms < 0) return '-';
+  const s = Math.floor(ms / 1000), m = Math.floor(s / 60), h = Math.floor(m / 60);
+  return h ? `${h} 小时 ${m % 60} 分` : m ? `${m} 分 ${s % 60} 秒` : `${s} 秒`;
+};
+const mask = (n) => String(n).length > 6 ? String(n).slice(0, 3) + '***' + String(n).slice(-2) : String(n || '-');
+
+async function load() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    document.getElementById('dot').className = 'dot' + (d.running ? ' on' : '');
+    document.getElementById('state').textContent = d.running ? '在跑' : '停着';
+    document.getElementById('qq').textContent = d.bot.qq ? mask(d.bot.qq) : '没填';
+    document.getElementById('name').textContent = d.bot.name || '还没取名（叫它小鲸）';
+    document.getElementById('owners').textContent = d.bot.owners.map(mask).join('、') || '没填';
+    document.getElementById('group').textContent = d.group.enabled ? (d.group.allow.join('、') || '开着，不限群') : '关着';
+    document.getElementById('model').textContent = d.model ? `${d.model.name} · ${d.model.model}${d.model.hasKey ? '' : '（没 key）'}` : '没配';
+    document.getElementById('uptime').textContent = d.running && d.since ? fmt(Date.now() - d.since) : '-';
+    document.getElementById('pids').textContent = d.running ? `看门人 ${d.supervisorPid} / 本体 ${d.botPid || '-'}` : '-';
+    const sel = document.getElementById('models');
+    if (sel.options.length !== d.models.length) {
+      sel.innerHTML = d.models.map((m) => `<option value="${m.i}">${m.name} · ${m.model}</option>`).join('');
+    }
+    sel.value = String(d.activeModel);
+    document.getElementById('log').textContent = d.log || '(还没有日志)';
+  } catch (e) {
+    document.getElementById('state').textContent = '连不上面板服务';
+  }
+}
+
+async function act(action) {
+  const names = { start: '启动', stop: '停止', restart: '重启' };
+  if (action === 'stop' && !confirm('停掉机器人？')) return;
+  document.getElementById('msg').textContent = names[action] + '中…';
+  const r = await fetch('/api/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) });
+  const d = await r.json();
+  document.getElementById('msg').textContent = d.msg || '';
+  setTimeout(load, 1500);
+}
+
+async function switchModel() {
+  const i = Number(document.getElementById('models').value);
+  const r = await fetch('/api/model', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: i }) });
+  const d = await r.json();
+  document.getElementById('mmsg').textContent = d.msg || '';
+  setTimeout(load, 2500);
+}
+
+load();
+timer = setInterval(load, 3000);
+</script>
+</body>
+</html>
