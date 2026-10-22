@@ -9,8 +9,9 @@
  *   node mem.mjs forget             把 90 天没改过新内容的主题标成「搁着」
  *   node mem.mjs list               看所有主题文件
  *   node mem.mjs synonyms           看同义词表（想加词就改文件里那张表）
+ *   node mem.mjs selfcheck          体检：几个主题、几段、哪些太久没记、索引过没过期
  *
- * 0.3 版（2026-10-22）改了两处：查询加同义词扩展、停用词补疑问虚词。
+ * 0.3.1 版（2026-10-22）：加 selfcheck。0.3 版（2026-10-22）改了两处：查询加同义词扩展、停用词补疑问虚词。
  */
 
 /*
@@ -273,6 +274,47 @@ function forget() {
   return `标成搁着、不再每轮带出来（文件还在，问到还能翻）：\n- ${rows.join('\n- ')}`;
 }
 
+// ---------- 体检 ----------
+
+const SELFCHECK_DAYS = 14; // 超过这么多天没添新内容，就在体检里提一句
+
+function selfcheck() {
+  const files = listFiles();
+  if (!files.length) {
+    return 'memory/ 还是空的。先写一条：node mem.mjs add 主题 "内容"，再 node mem.mjs build。';
+  }
+  const now = Date.now();
+  const idle = [];
+  let stale = 0, paras = 0;
+  for (const f of files) {
+    const raw = fs.readFileSync(f.path, 'utf8').replace(/^\uFEFF/, '');
+    const n = splitParagraphs(raw).length;
+    paras += n;
+    if (/^\[搁着[:：]/.test(raw)) { stale++; continue; }
+    const days = Math.floor((now - f.mtime) / 86400000);
+    if (days > SELFCHECK_DAYS) idle.push(`${f.rel}（${days} 天没新内容，${n} 段）`);
+  }
+
+  const out = [`${files.length} 个主题、${paras} 段；${stale} 个搁着、${files.length - stale} 个还在带。`];
+
+  if (!fs.existsSync(INDEX_FILE)) {
+    out.push('索引还没建过，query 第一次跑会自己建。');
+  } else {
+    const idxTime = fs.statSync(INDEX_FILE).mtimeMs;
+    const newer = files.filter(f => f.mtime > idxTime).map(f => f.rel);
+    if (newer.length) out.push(`索引比文件旧（${newer.join('、')} 改过），先 build 再查才准。`);
+  }
+
+  if (idle.length) {
+    out.push(`这些超过 ${SELFCHECK_DAYS} 天没添新内容，想想是不是该记点什么：`);
+    idle.forEach(r => out.push('- ' + r));
+  } else {
+    out.push(`没有超过 ${SELFCHECK_DAYS} 天没动的主题。`);
+  }
+  out.push('（体检只读文件、不调模型，不花钱；改隔几天算久，改上面 SELFCHECK_DAYS。）');
+  return out.join('\n');
+}
+
 // ---------- 命令行 ----------
 
 function main(argv) {
@@ -324,8 +366,11 @@ function main(argv) {
       console.log(`同义词表（${SYNONYMS.length} 组）：\n${lines.join('\n')}\n\n命中组里任一词，整组都会拿来查，分数打 ${SYN_WEIGHT} 折。`);
       break;
     }
+    case 'selfcheck':
+      console.log(selfcheck());
+      break;
     default:
-      console.log('用法：node mem.mjs build | query "问题" | add 主题 "内容" | forget | list | synonyms');
+      console.log('用法：node mem.mjs build | query "问题" | add 主题 "内容" | forget | list | synonyms | selfcheck');
       process.exitCode = cmd ? 1 : 0;
   }
 }
